@@ -40,12 +40,19 @@ export function parseAuthorityKeyIdentifier(ext: {
     const seq = (asn1.valueBlock as any).value;
 
     for (const item of seq) {
+      // Fields are IMPLICIT context-specific tags, so asn1js decodes them as generic
+      // primitives rather than OctetString/Integer instances.
+      if (item.idBlock.tagClass !== 3) {
+        continue;
+      }
       const tag = item.idBlock.tagNumber;
 
-      if (tag === 0 && item instanceof OctetString) {
+      if (tag === 0) {
         result.parsed!.keyIdentifier = bufferToHexCodes(item.valueBlock.valueHex);
-      } else if (tag === 2 && item instanceof Integer) {
-        result.parsed!.authorityCertSerialNumber = item.valueBlock.valueDec.toString();
+      } else if (tag === 2) {
+        result.parsed!.authorityCertSerialNumber = BigInt(
+          '0x' + (bufferToHexCodes(item.valueBlock.valueHex) || '0')
+        ).toString();
       } else if (tag === 1) {
         result.parsed!.authorityCertIssuer = '[GeneralNames parsing not yet implemented]';
       }
