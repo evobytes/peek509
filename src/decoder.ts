@@ -16,7 +16,15 @@ import { parseAuthorityKeyIdentifier } from './extensionParser/parsers/authority
  * @returns
  */
 export async function decodeCertificate(pem: string): Promise<DecodedCert> {
-  const b64 = pem
+  // PEM files may contain bag attributes, private keys or a certificate chain, so
+  // only decode the first CERTIFICATE block.
+  const match = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/);
+  if (!match) {
+    throw new Error('No PEM-encoded certificate found');
+  }
+  const certPem = match[0];
+
+  const b64 = certPem
     .replace(/-----BEGIN CERTIFICATE-----/, '')
     .replace(/-----END CERTIFICATE-----/, '')
     .replace(/\s+/g, '');
@@ -96,7 +104,7 @@ export async function decodeCertificate(pem: string): Promise<DecodedCert> {
     publicKey,
     fingerprint,
     extensions,
-    decodedPem: pem,
+    decodedPem: certPem,
   };
 }
 
