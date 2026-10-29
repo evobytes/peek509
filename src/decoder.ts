@@ -1,4 +1,4 @@
-import { DecodedCert, ParsedExtension, oidMap, extensionOidMap } from './types';
+import { ChainEntry, DecodedCert, ParsedExtension, PemReport, oidMap, extensionOidMap } from './types';
 import { parseBasicConstraints } from './extensionParser/parsers/basicConstraints';
 import { parseKeyUsage } from './extensionParser/parsers/keyUsage';
 import { parseSubjectAltName } from './extensionParser/parsers/subjectAltName';
@@ -11,19 +11,49 @@ import { parseSubjectKeyIdentifier } from './extensionParser/parsers/subjectKeyI
 import { parseAuthorityKeyIdentifier } from './extensionParser/parsers/authorityKeyIdentifier';
 
 /**
- * Decodes a PEM-encoded X.509 certificate.
+ * Finds every CERTIFICATE block in a PEM file. The file may also contain bag attributes,
+ * private keys and other text, which are ignored.
+ * @param pem The PEM file content.
+ * @returns The CERTIFICATE blocks, in file order.
+ */
+export function extractCertificatePems(pem: string): string[] {
+  return pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/g) ?? [];
+}
+
+/**
+ * Finds the private keys in a PEM file, without decoding them.
+ * @param pem The PEM file content.
+ * @returns The type of each private key block and whether it is encrypted.
+ */
+export function findPrivateKeys(pem: string): { type: string; encrypted: boolean }[] {
+  const blocks = pem.match(/-----BEGIN ([A-Z ]*PRIVATE KEY)-----[\s\S]*?-----END \1-----/g) ?? [];
+  return blocks.map(block => {
+    const type = block.match(/-----BEGIN ([A-Z ]*PRIVATE KEY)-----/)![1];
+    // PKCS#8 uses "ENCRYPTED PRIVATE KEY"; traditional OpenSSL keys use a Proc-Type header.
+    const encrypted = type.startsWith('ENCRYPTED') || /Proc-Type:\s*4,ENCRYPTED/.test(block);
+    return { type, encrypted };
+  });
+}
+
+/**
+ * Decodes the first X.509 certificate in a PEM file.
  * @param pem
  * @returns
  */
 export async function decodeCertificate(pem: string): Promise<DecodedCert> {
-  // PEM files may contain bag attributes, private keys or a certificate chain, so
-  // only decode the first CERTIFICATE block.
-  const match = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/);
-  if (!match) {
+  const [certPem] = extractCertificatePems(pem);
+  if (!certPem) {
     throw new Error('No PEM-encoded certificate found');
   }
-  const certPem = match[0];
+  return (await parseCertificate(certPem)).decoded;
+}
 
+/**
+ * Decodes a single PEM CERTIFICATE block.
+ * @param certPem A single "-----BEGIN CERTIFICATE-----" block.
+ * @returns The decoded certificate, plus the pkijs Certificate for chain building.
+ */
+export async function parseCertificate(certPem: string): Promise<{ decoded: DecodedCert; cert: Certificate }> {
   const b64 = certPem
     .replace(/-----BEGIN CERTIFICATE-----/, '')
     .replace(/-----END CERTIFICATE-----/, '')
@@ -96,7 +126,22 @@ export async function decodeCertificate(pem: string): Promise<DecodedCert> {
     };
   });
 
-  return {
+  // pkijs pre-parses well-known extensions into parsedValue; use those for chain building.
+  const parsedExt = (oid: string): any => cert.extensions?.find(ext => ext.extnID === oid)?.parsedValue;
+  const ski = parsedExt('2.5.29.14');
+  const subjectKeyId = ski ? bufferToHexCodes(ski.valueBlock.valueHexView) : undefined;
+  const akiKeyId = parsedExt('2.5.29.35')?.keyIdentifier;
+  const authorityKeyId = akiKeyId ? bufferToHexCodes(akiKeyId.valueBlock.valueHexView) : undefined;
+  const isCA = !!parsedExt('2.5.29.19')?.cA;
+  const caIssuers: string[] = (parsedExt('1.3.6.1.5.5.7.1.1')?.accessDescriptions ?? [])
+    .filter((ad: any) => ad.accessMethod === '1.3.6.1.5.5.7.48.2' && ad.accessLocation.type === 6)
+    .map((ad: any) => ad.accessLocation.value);
+
+  // Self-signed if the subject and issuer match, and the key identifiers (when present) agree.
+  const selfSigned =
+    cert.subject.isEqual(cert.issuer) && (!subjectKeyId || !authorityKeyId || subjectKeyId === authorityKeyId);
+
+  const decoded: DecodedCert = {
     subject,
     issuer,
     serialNumber,
@@ -105,9 +150,24 @@ export async function decodeCertificate(pem: string): Promise<DecodedCert> {
     signature,
     publicKey,
     fingerprint,
+    isCA,
+    selfSigned,
+    subjectKeyId,
+    authorityKeyId,
+    caIssuers,
     extensions,
     decodedPem: certPem,
   };
+
+  return { decoded, cert };
+}
+
+/**
+ * Returns a short display name for a subject or issuer: its Common Name, or all values if it has none.
+ * @param attrs The attributes (name, value) of a certificate's subject or issuer.
+ */
+export function displayName(attrs: { name: string; value: string }[]): string {
+  return attrs.find(a => a.name === '2.5.4.3')?.value ?? attrs.map(a => a.value).join(', ');
 }
 
 /**
@@ -173,6 +233,99 @@ export function formatCertificate(decoded: DecodedCert): string {
   output += '\n\n' + '~'.repeat(50) + '\n';
   output += '\nPEM Content:\n\n';
   output += decoded.decodedPem || '';
+  return output;
+}
+
+/**
+ * A human-readable label for a chain entry's role, noting when it came from the trust store.
+ */
+export function roleLabel(entry: ChainEntry): string {
+  const role = { leaf: 'Leaf', intermediate: 'Intermediate', root: 'Root' }[entry.role];
+  return entry.source === 'trust-store' ? `${role} (from trust store, not in file)` : role;
+}
+
+/**
+ * Describes when a certificate expires, as a yyyy-mm-dd (UTC) date, and whether it has expired or expires soon.
+ * @param cert The certificate.
+ * @param soonDays How many days before expiry counts as expiring soon.
+ */
+export function expiryStatus(
+  cert: DecodedCert,
+  soonDays = 30
+): { date: string; state: 'valid' | 'expiring' | 'expired'; text: string } {
+  const date = cert.notAfter.toISOString().slice(0, 10);
+  const daysLeft = Math.floor((cert.notAfter.getTime() - Date.now()) / 86_400_000);
+  if (daysLeft < 0) {
+    return { date, state: 'expired', text: `Expired: ${date}` };
+  }
+  if (daysLeft <= soonDays) {
+    return { date, state: 'expiring', text: `Expires: ${date} (in ${daysLeft} day${daysLeft === 1 ? '' : 's'})` };
+  }
+  return { date, state: 'valid', text: `Expires: ${date}` };
+}
+
+/**
+ * A warning describing the private keys in a file, or undefined if there are none.
+ */
+export function privateKeyNotice(report: PemReport): string | undefined {
+  if (report.privateKeys.length === 0) {
+    return undefined;
+  }
+  const keys = report.privateKeys
+    .map(k => (k.type.startsWith('ENCRYPTED') ? k.type : `${k.encrypted ? 'encrypted' : 'unencrypted'} ${k.type}`))
+    .join(', ');
+  return `This file contains a private key (${keys}). Its contents are not shown.`;
+}
+
+/**
+ * Formats all chains in a PemReport into a single string to print in a text format.
+ * @param report The PemReport to format.
+ * @returns A single multi-line string with a chain overview followed by each certificate.
+ */
+export function formatReport(report: PemReport): string {
+  let output = '';
+
+  const keyNotice = privateKeyNotice(report);
+  if (keyNotice) {
+    output += `WARNING: ${keyNotice}\n\n`;
+  }
+
+  report.chains.forEach((chain, c) => {
+    const chainTitle =
+      report.chains.length > 1 ? `Certificate Chain ${c + 1} of ${report.chains.length}` : 'Certificate Chain';
+    output += `${chainTitle}:\n`;
+    chain.entries.forEach((entry, i) => {
+      let verified = '';
+      if (entry.signatureVerified !== undefined) {
+        verified = entry.signatureVerified ? ' [signature verified]' : ' [SIGNATURE INVALID]';
+      }
+      const indent = '  '.repeat(i + 1) + (i > 0 ? 'issued by ' : '');
+      output += `${indent}[${i + 1}] ${roleLabel(entry)}: ${displayName(entry.cert.subject)}${verified}\n`;
+      const expiry = expiryStatus(entry.cert);
+      // Shout when expired or expiring, since the text view has no colour.
+      const expiryText = expiry.state === 'valid' ? expiry.text : expiry.text.toUpperCase();
+      output += `${' '.repeat(indent.length)}${expiryText}\n`;
+    });
+    if (chain.anchor.kind === 'missing') {
+      output += `${'  '.repeat(chain.entries.length + 1)}issued by MISSING CERTIFICATE (not in file or trust store):\n`;
+      output += formatSubjectOrIssuer(chain.anchor.issuer);
+      if (chain.anchor.authorityKeyId) {
+        output += `${pad('    Key Identifier:')}${chain.anchor.authorityKeyId}\n`;
+      }
+      for (const url of chain.anchor.caIssuers ?? []) {
+        output += `${pad('    Download from:')}${url}\n`;
+      }
+    }
+    output += '\n';
+
+    chain.entries.forEach((entry, i) => {
+      output += '='.repeat(50) + '\n';
+      output += `[${i + 1}] ${roleLabel(entry)}\n`;
+      output += '='.repeat(50) + '\n';
+      output += formatCertificate(entry.cert) + '\n\n';
+    });
+  });
+
   return output;
 }
 

@@ -23,12 +23,61 @@ export interface DecodedCert {
     };
   };
   fingerprint: string;
+  isCA: boolean;
+  selfSigned: boolean;
+  subjectKeyId?: string;
+  authorityKeyId?: string;
+  caIssuers?: string[]; // URLs from Authority Information Access
   extensions?: {
     name: string;
     binaryValue: string;
     critical?: boolean;
   }[];
   decodedPem?: string;
+}
+
+/**
+ * A certificate's position in a chain, and whether it came from the file or the trust store.
+ */
+export interface ChainEntry {
+  cert: DecodedCert;
+  role: 'leaf' | 'intermediate' | 'root';
+  source: 'file' | 'trust-store';
+  // Whether this certificate's signature verifies against its issuer (the next entry in the chain,
+  // or itself for a self-signed root). Undefined when the issuer is not available.
+  signatureVerified?: boolean;
+}
+
+/**
+ * What the last certificate found in the file depends on.
+ *  - self-signed: the file includes the root.
+ *  - trust-store: the issuing root was found in the trust store and appended to the chain.
+ *  - missing: the issuer could not be found (a missing intermediate, or an unknown root).
+ */
+export type ChainAnchor =
+  | { kind: 'self-signed' }
+  | { kind: 'trust-store' }
+  | {
+      kind: 'missing';
+      issuer: { name: string; value: string }[];
+      authorityKeyId?: string;
+      caIssuers?: string[];
+    };
+
+/**
+ * Certificates ordered from leaf to root.
+ */
+export interface CertChain {
+  entries: ChainEntry[];
+  anchor: ChainAnchor;
+}
+
+/**
+ * Everything found in a PEM file.
+ */
+export interface PemReport {
+  privateKeys: { type: string; encrypted: boolean }[];
+  chains: CertChain[];
 }
 
 /**
