@@ -60,15 +60,6 @@
             "plaintext"
           ],
           "description": "Specifies how decoded certificates are displayed. 'webview' uses a rich HTML panel; 'text' uses a plain virtual document."
-        },
-        "peek509.webviewTheme": {
-          "type": "string",
-          "default": "dark",
-          "enum": [
-            "light",
-            "dark"
-          ],
-          "description": "Specifies the theme for the webview. 'light' or 'dark'."
         }
       }
     }

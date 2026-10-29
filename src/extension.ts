@@ -51,7 +51,6 @@ export async function activate(context: vscode.ExtensionContext) {
 
     try {
       const useWebView = vscode.workspace.getConfiguration('peek509').get('renderMode', 'webview') === 'webview';
-      const theme = vscode.workspace.getConfiguration('peek509').get('theme', 'light');
 
       // Decode the certificates and show either in webview or text document.
 
@@ -67,7 +66,7 @@ export async function activate(context: vscode.ExtensionContext) {
           enableScripts: true,
         });
 
-        panel.webview.html = getWebviewContent(report, theme);
+        panel.webview.html = getWebviewContent(report);
       } else {
         // Create a Virtual Document Provider to display the results.
         vscode.workspace.registerTextDocumentContentProvider('peek509', {
@@ -296,8 +295,7 @@ function renderChain(chain: CertChain, chainIndex: number, chainCount: number): 
     </section>`;
 }
 
-function getWebviewContent(report: PemReport, theme: string): string {
-  const isDark = theme === 'dark';
+function getWebviewContent(report: PemReport): string {
   const keyNotice = privateKeyNotice(report);
 
   return `
@@ -310,16 +308,31 @@ function getWebviewContent(report: PemReport, theme: string): string {
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     :root {
-      --bg-primary: ${isDark ? '#111827' : '#ffffff'};
-      --bg-secondary: ${isDark ? '#1f2937' : '#f3f4f6'};
-      --text-primary: ${isDark ? '#e5e7eb' : '#1f2937'};
-      --text-secondary: ${isDark ? '#9ca3af' : '#6b7280'};
-      --border-color: ${isDark ? '#374151' : '#e5e7eb'};
-      --accent-color: ${isDark ? '#60a5fa' : '#2563eb'};
-      --accent-hover: ${isDark ? '#3b82f6' : '#1d4ed8'};
-      --code-bg: ${isDark ? '#374151' : '#e5e7eb'};
-      --warn-bg: ${isDark ? '#422006' : '#fef9c3'};
-      --warn-border: ${isDark ? '#a16207' : '#facc15'};
+      --bg-primary: #ffffff;
+      --bg-secondary: #f3f4f6;
+      --text-primary: #1f2937;
+      --text-secondary: #6b7280;
+      --border-color: #e5e7eb;
+      --accent-color: #2563eb;
+      --accent-hover: #1d4ed8;
+      --code-bg: #e5e7eb;
+      --warn-bg: #fef9c3;
+      --warn-border: #facc15;
+    }
+
+    /* VS Code sets a theme class on the webview body and updates it live when the editor theme changes. */
+    body.vscode-dark,
+    body.vscode-high-contrast {
+      --bg-primary: #111827;
+      --bg-secondary: #1f2937;
+      --text-primary: #e5e7eb;
+      --text-secondary: #9ca3af;
+      --border-color: #374151;
+      --accent-color: #60a5fa;
+      --accent-hover: #3b82f6;
+      --code-bg: #374151;
+      --warn-bg: #422006;
+      --warn-border: #a16207;
     }
     
     body {
@@ -375,38 +388,11 @@ function getWebviewContent(report: PemReport, theme: string): string {
       white-space: pre-wrap;
     }
     
-    button {
-      background-color: var(--accent-color);
-      transition: background-color 0.2s;
-      color: white;
-      border: none;
-      padding: 0.5rem 1rem;
-      border-radius: 0.375rem;
-      cursor: pointer;
-      font-size: 0.875rem;
-    }
-    
-    button:hover {
-      background-color: var(--accent-hover);
-    }
-
-    #themeToggle {
-      position: fixed;
-      top: 1.5rem;
-      right: 1.5rem;
-      z-index: 1000;
-      padding: 0.5rem;
-    }
-    
     table td { border-bottom: 1px solid var(--border-color); }
     table tr:last-child td { border-bottom: none; }
   </style>
 </head>
 <body class="font-sans">
-  <button id="themeToggle" title="Toggle dark/light mode">
-    <span id="themeIcon">${isDark ? '☀️' : '🌙'}</span>
-  </button>
-
   <div class="max-w-4xl mx-auto p-6">
     <h1 class="text-2xl font-bold mb-4">X.509 Certificates</h1>
 
@@ -420,59 +406,6 @@ function getWebviewContent(report: PemReport, theme: string): string {
   </div>
 
   <script>
-    let isDark = ${isDark ? 'true' : 'false'};
-
-    function updateTheme() {
-      const root = document.documentElement;
-      const isDarkMode = isDark;
-      
-      const colors = {
-        dark: {
-          bgPrimary: '#111827',
-          bgSecondary: '#1f2937',
-          textPrimary: '#e5e7eb',
-          textSecondary: '#9ca3af',
-          borderColor: '#374151',
-          accentColor: '#60a5fa',
-          accentHover: '#3b82f6',
-          codeBg: '#374151',
-          warnBg: '#422006',
-          warnBorder: '#a16207',
-        },
-        light: {
-          bgPrimary: '#ffffff',
-          bgSecondary: '#f3f4f6',
-          textPrimary: '#1f2937',
-          textSecondary: '#6b7280',
-          borderColor: '#e5e7eb',
-          accentColor: '#2563eb',
-          accentHover: '#1d4ed8',
-          codeBg: '#e5e7eb',
-          warnBg: '#fef9c3',
-          warnBorder: '#facc15',
-        }
-      };
-
-      const theme = isDarkMode ? colors.dark : colors.light;
-      root.style.setProperty('--bg-primary', theme.bgPrimary);
-      root.style.setProperty('--bg-secondary', theme.bgSecondary);
-      root.style.setProperty('--text-primary', theme.textPrimary);
-      root.style.setProperty('--text-secondary', theme.textSecondary);
-      root.style.setProperty('--border-color', theme.borderColor);
-      root.style.setProperty('--accent-color', theme.accentColor);
-      root.style.setProperty('--accent-hover', theme.accentHover);
-      root.style.setProperty('--code-bg', theme.codeBg);
-      root.style.setProperty('--warn-bg', theme.warnBg);
-      root.style.setProperty('--warn-border', theme.warnBorder);
-
-      document.getElementById('themeIcon').textContent = isDarkMode ? '☀️' : '🌙';
-    }
-
-    document.getElementById('themeToggle').addEventListener('click', () => {
-      isDark = !isDark;
-      updateTheme();
-    });
-
     document.querySelectorAll('.copyable').forEach(el => {
       el.addEventListener('click', () => navigator.clipboard.writeText(el.textContent.trim()));
     });

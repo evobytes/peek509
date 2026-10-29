@@ -20,7 +20,7 @@
 ### Webview Certificate Viewer (New in 1.3.0)
 
 - Rich HTML UI powered by TailwindCSS
-- Light/Dark theme support
+- Light/Dark theme follows your VS Code theme
 - Collapsible sections for clean navigation
 - Copy‑to‑clipboard buttons for long fields:
 - SHA‑256 fingerprint
@@ -70,10 +70,9 @@
 
 ## Configuration
 
-| Setting              | Description                                             |
-| -------------------- | ------------------------------------------------------- |
-| peek509.renderMode   | Choose between `webview` (recommended) or `text` output |
-| peek509.webviewTheme | Select "light" or "dark" theme for the Webview          |
+| Setting            | Description                                             |
+| ------------------ | ------------------------------------------------------- |
+| peek509.renderMode | Choose between `webview` (recommended) or `text` output |
 
 ## Installation
 
