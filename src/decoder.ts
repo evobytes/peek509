@@ -30,7 +30,9 @@ export async function decodeCertificate(pem: string): Promise<DecodedCert> {
     .replace(/\s+/g, '');
   const der = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
   const asn1 = fromBER(der.buffer);
-  if (asn1.offset === -1) throw new Error('Failed to decode ASN.1');
+  if (asn1.offset === -1) {
+    throw new Error('Failed to decode ASN.1');
+  }
 
   const cert = new Certificate({ schema: asn1.result });
 

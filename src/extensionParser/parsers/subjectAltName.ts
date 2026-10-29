@@ -44,7 +44,9 @@ export function parseSubjectAltName(ext: { name: string; binaryValue: string; cr
     const parsedNames: Record<string, string[]> = {};
 
     for (const name of names) {
-      if (!(name instanceof Primitive)) continue;
+      if (!(name instanceof Primitive)) {
+        continue;
+      }
 
       const tag = name.idBlock.tagNumber;
       const value = name.valueBlock.valueHexView.reduce((str, byte) => str + String.fromCharCode(byte), '');
